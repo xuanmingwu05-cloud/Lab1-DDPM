@@ -1,3 +1,4 @@
+import math
 from typing import Optional, Union
 
 import numpy as np
@@ -44,7 +45,13 @@ class BaseScheduler(nn.Module):
             #       beta_t = 1 - alphā_t / alphā_{t-1}
             # 3. Clip beta_t to at most 0.999 (singularity at t = T).
             # 4. Return betas as a tensor of shape [num_train_timesteps].
-            raise NotImplementedError("TODO: Implement cosine beta schedule here!")
+            steps = num_train_timesteps + 1
+            t = torch.linspace(0, num_train_timesteps, steps=steps, dtype=torch.float64)
+            s = 0.008
+            f_t = torch.cos(((t / num_train_timesteps + s) / (1 + s)) * (math.pi / 2)) ** 2
+            alpha_bar = f_t / f_t[0]
+            betas = 1 - (alpha_bar[1:] / alpha_bar[:-1])
+            betas = torch.clip(betas, 0, 0.999).float()
                
         else:
             raise NotImplementedError(f"{mode} is not implemented.")
@@ -139,7 +146,20 @@ class DDPMScheduler(BaseScheduler):
         # 4. Compute the posterior variance \tilde{β}_t = ((1-ᾱ_{t-1})/(1-ᾱ_t)) * β_t.
         # 5. Add Gaussian noise scaled by √(\tilde{β}_t) unless t == 0.
         # 6. Return the final sample at t-1.
-        sample_prev = None
+        alphas_cumprod_prev = torch.cat([torch.tensor([1.0], device=self.alphas_cumprod.device), self.alphas_cumprod[:-1]])
+        beta_t = extract(self.betas, t, x_t)
+        alpha_t = extract(self.alphas, t, x_t)
+        alpha_bar_t = extract(self.alphas_cumprod, t, x_t)
+        alpha_bar_t_prev = extract(alphas_cumprod_prev, t, x_t)
+
+        x0_pred = ((x_t - (1.0 - alpha_bar_t).sqrt() * eps_theta) / alpha_bar_t.sqrt()).clamp(-1.0, 1.0)
+        mean_tilde = (alpha_bar_t_prev.sqrt() * beta_t / (1.0 - alpha_bar_t)) * x0_pred + (alpha_t.sqrt() * (1.0 - alpha_bar_t_prev) / (1.0 - alpha_bar_t)) * x_t
+        variance = ((1.0 - alpha_bar_t_prev) / (1.0 - alpha_bar_t)) * beta_t
+
+        if (t == 0).all():
+            sample_prev = mean_tilde
+        else:
+            sample_prev = mean_tilde + variance.sqrt() * torch.randn_like(x_t)
         #######################
         return sample_prev
 
@@ -157,8 +177,20 @@ class DDPMScheduler(BaseScheduler):
         """
         ######## TODO ########
         # Remember to clamp x0_pred to [-1, 1], as in step_predict_noise.
+        alphas_cumprod_prev = torch.cat([torch.tensor([1.0], device=self.alphas_cumprod.device), self.alphas_cumprod[:-1]])
+        beta_t = extract(self.betas, t, x_t)
+        alpha_t = extract(self.alphas, t, x_t)
+        alpha_bar_t = extract(self.alphas_cumprod, t, x_t)
+        alpha_bar_t_prev = extract(alphas_cumprod_prev, t, x_t)
 
-        sample_prev = None
+        x0_clamped = x0_pred.clamp(-1.0, 1.0)
+        mean_tilde = (alpha_bar_t_prev.sqrt() * beta_t / (1.0 - alpha_bar_t)) * x0_clamped + (alpha_t.sqrt() * (1.0 - alpha_bar_t_prev) / (1.0 - alpha_bar_t)) * x_t
+        variance = ((1.0 - alpha_bar_t_prev) / (1.0 - alpha_bar_t)) * beta_t
+
+        if (t == 0).all():
+            sample_prev = mean_tilde
+        else:
+            sample_prev = mean_tilde + variance.sqrt() * torch.randn_like(x_t)
         #######################
         return sample_prev
 
@@ -175,8 +207,17 @@ class DDPMScheduler(BaseScheduler):
             sample_prev: denoised image sample at timestep t-1
         """
         ######## TODO ########
+        alphas_cumprod_prev = torch.cat([torch.tensor([1.0], device=self.alphas_cumprod.device), self.alphas_cumprod[:-1]])
+        beta_t = extract(self.betas, t, x_t)
+        alpha_bar_t = extract(self.alphas_cumprod, t, x_t)
+        alpha_bar_t_prev = extract(alphas_cumprod_prev, t, x_t)
 
-        sample_prev = None
+        variance = ((1.0 - alpha_bar_t_prev) / (1.0 - alpha_bar_t)) * beta_t
+
+        if (t == 0).all():
+            sample_prev = mean_theta
+        else:
+            sample_prev = mean_theta + variance.sqrt() * torch.randn_like(x_t)
         #######################
         return sample_prev
 
@@ -211,7 +252,8 @@ class DDPMScheduler(BaseScheduler):
         ######## TODO ########
         # DO NOT change the code outside this part.
         # Assignment 1. Implement the DDPM forward step.
-        x_t = None
+        alpha_bar_t = extract(self.alphas_cumprod, t, x_0)
+        x_t = alpha_bar_t.sqrt() * x_0 + (1.0 - alpha_bar_t).sqrt() * eps
         #######################
 
         return x_t, eps

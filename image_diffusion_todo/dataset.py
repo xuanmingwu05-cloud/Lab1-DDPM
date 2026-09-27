@@ -1,4 +1,7 @@
 import os
+import shutil
+import urllib.request
+import zipfile
 from itertools import chain
 from multiprocessing.pool import Pool
 from pathlib import Path
@@ -167,12 +170,17 @@ class AFHQDataModule(object):
         self.num_classes = self.train_ds.num_classes
 
     def _download_dataset(self):
-        URL = "https://www.dropbox.com/s/t9l9o3vsx2jai3z/afhq.zip?dl=0"
-        ZIP_FILE = f"./{self.root}/afhq.zip"
-        os.system(f"mkdir -p {self.root}")
-        os.system(f"wget -N {URL} -O {ZIP_FILE}")
-        os.system(f"unzip {ZIP_FILE} -d {self.root}")
-        os.system(f"rm {ZIP_FILE}")
+        URL = "https://www.dropbox.com/s/t9l9o3vsx2jai3z/afhq.zip?dl=1"
+        os.makedirs(self.root, exist_ok=True)
+        ZIP_FILE = os.path.join(self.root, "afhq.zip")
+        print(f"Downloading AFHQ dataset from {URL} to {ZIP_FILE}...")
+        urllib.request.urlretrieve(URL, ZIP_FILE)
+        print("Extracting AFHQ dataset...")
+        with zipfile.ZipFile(ZIP_FILE, "r") as zip_ref:
+            zip_ref.extractall(self.root)
+        if os.path.exists(ZIP_FILE):
+            os.remove(ZIP_FILE)
+        print("AFHQ dataset ready.")
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(
@@ -200,11 +208,11 @@ if __name__ == "__main__":
     eval_dir.mkdir(exist_ok=True)
     def func(path):
         fn = path.name
-        cmd = f"cp {path} {eval_dir / fn}"
-        os.system(cmd)
-        img = Image.open(str(eval_dir / fn))
-        img = img.resize((64,64))
-        img.save(str(eval_dir / fn))
+        dst = eval_dir / fn
+        shutil.copy(str(path), str(dst))
+        img = Image.open(str(dst))
+        img = img.resize((64, 64))
+        img.save(str(dst))
         print(fn)
 
     with Pool(8) as pool:
