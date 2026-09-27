@@ -83,7 +83,7 @@ class SimpleNet(nn.Module):
 
         ######## TODO ########
         # DO NOT change the code outside this part.
-
+        12345
         ######################
 
     def forward(self, x: torch.Tensor, t: torch.Tensor):
